@@ -1,0 +1,63 @@
+# Azure Pipeline for ${{ values.name }}
+# Builds the .NET API into a Docker image and pushes it to the registry.
+#
+# Note: for Azure Repos Git, PR validation builds are configured with a branch
+# policy (Repos → Branches → ${{ values.defaultBranch }} → Branch policies → Build validation),
+# not with a `pr:` block. PR builds build the image but don't push it.
+
+trigger:
+  branches:
+    include:
+      - ${{ values.defaultBranch }}
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  containerRegistryConnection: '${{ values.containerRegistryConnection }}'
+  imageRepository: '${{ values.imageRepository }}'
+  dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
+  tag: '$(Build.BuildId)'
+  isDefaultBranch: $[eq(variables['Build.SourceBranch'], 'refs/heads/${{ values.defaultBranch }}')]
+
+stages:
+  - stage: Build
+    displayName: Build and push image
+    jobs:
+      - job: Docker
+        displayName: Docker build
+        steps:
+          - checkout: self
+
+          - task: Docker@2
+            displayName: Log in to registry
+            condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+            inputs:
+              command: login
+              containerRegistry: '$(containerRegistryConnection)'
+
+          - task: Docker@2
+            displayName: Build image
+            inputs:
+              command: build
+              containerRegistry: '$(containerRegistryConnection)'
+              repository: '$(imageRepository)'
+              Dockerfile: '$(dockerfilePath)'
+              buildContext: '$(Build.SourcesDirectory)'
+              tags: |
+                $(tag)
+                latest
+              arguments: >-
+                --label org.opencontainers.image.revision=$(Build.SourceVersion)
+                --label org.opencontainers.image.source=$(Build.Repository.Uri)
+
+          - task: Docker@2
+            displayName: Push image
+            condition: and(succeeded(), eq(variables.isDefaultBranch, true), ne(variables['Build.Reason'], 'PullRequest'))
+            inputs:
+              command: push
+              containerRegistry: '$(containerRegistryConnection)'
+              repository: '$(imageRepository)'
+              tags: |
+                $(tag)
+                latest

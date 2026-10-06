@@ -1,0 +1,201 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: dotnet-api-azure-devops
+  title: .NET Web API (Azure DevOps + Docker)
+  description: >-
+    Creates an ASP.NET Core minimal Web API in a new Azure DevOps repository,
+    plus an Azure Pipeline that builds it into a Docker image and pushes it to
+    your container registry.
+  tags:
+    - dotnet
+    - csharp
+    - api
+    - docker
+    - azure-devops
+    - recommended
+spec:
+  owner: group:default/platform-team   # <-- change to the team that owns this template
+  type: service
+
+  # ---------------------------------------------------------------------------
+  # Form
+  # ---------------------------------------------------------------------------
+  parameters:
+    - title: Service details
+      required:
+        - name
+        - owner
+      properties:
+        name:
+          title: Name
+          type: string
+          description: >-
+            Unique name of the service. Used for the repo, the .NET project,
+            the pipeline and the catalog entity. Lowercase letters, numbers and dashes.
+          pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          maxLength: 63
+          ui:autofocus: true
+          ui:help: 'Example: orders-api'
+        description:
+          title: Description
+          type: string
+          description: What does this API do?
+          default: A .NET Web API
+        owner:
+          title: Owner
+          type: string
+          description: Team or user that owns the service
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind:
+                - Group
+                - User
+        system:
+          title: System (optional)
+          type: string
+          description: System this API belongs to
+          ui:field: EntityPicker
+          ui:options:
+            catalogFilter:
+              kind: System
+        dotnetVersion:
+          title: .NET version
+          type: string
+          default: '10.0'
+          enum:
+            - '10.0'
+            - '8.0'
+          enumNames:
+            - .NET 10 (LTS)
+            - .NET 8 (LTS)
+
+    - title: Azure DevOps repository
+      required:
+        - repoUrl
+      properties:
+        repoUrl:
+          title: Repository location
+          type: string
+          description: Azure DevOps organization, project and the name of the NEW repository
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - dev.azure.com
+        defaultBranch:
+          title: Default branch
+          type: string
+          default: main
+
+    - title: Build pipeline
+      required:
+        - containerRegistryConnection
+      properties:
+        containerRegistryConnection:
+          title: Container registry service connection
+          type: string
+          description: >-
+            Name of an existing "Docker Registry" service connection in the Azure DevOps
+            project (ACR, Quay, Docker Hub, ...). The pipeline pushes the image through it.
+          ui:help: 'Project Settings → Service connections. Example: acr-shared'
+        containerRegistryConnectionId:
+          title: Service connection ID (optional)
+          type: string
+          description: >-
+            GUID of the same service connection. If provided, the new pipeline is
+            pre-authorized to use it, so the first run doesn't wait for manual approval.
+          ui:help: Shown in the service connection URL as resourceId=<guid>
+        imageRepository:
+          title: Image repository (optional)
+          type: string
+          description: >-
+            Repository path inside the registry, e.g. "team-a/orders-api".
+            Defaults to the service name.
+        runPipeline:
+          title: Run the pipeline after creating it
+          type: boolean
+          default: true
+
+  # ---------------------------------------------------------------------------
+  # Steps
+  # ---------------------------------------------------------------------------
+  steps:
+    - id: fetch-skeleton
+      name: Generate .NET API source
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          owner: ${{ parameters.owner }}
+          system: ${{ parameters.system }}
+          dotnetVersion: ${{ parameters.dotnetVersion }}
+          organization: ${{ (parameters.repoUrl | parseRepoUrl)['organization'] }}
+          project: ${{ (parameters.repoUrl | parseRepoUrl)['project'] }}
+          repo: ${{ (parameters.repoUrl | parseRepoUrl)['repo'] }}
+          defaultBranch: ${{ parameters.defaultBranch }}
+          containerRegistryConnection: ${{ parameters.containerRegistryConnection }}
+          imageRepository: ${{ parameters.imageRepository or parameters.name }}
+
+    - id: publish
+      name: Create Azure DevOps repository
+      action: publish:azure
+      input:
+        repoUrl: ${{ parameters.repoUrl }}
+        description: ${{ parameters.description }}
+        defaultBranch: ${{ parameters.defaultBranch }}
+        gitCommitMessage: 'Initial commit from Red Hat Developer Hub template'
+
+    - id: create-pipeline
+      name: Create Azure Pipeline
+      action: azure:pipeline:create
+      input:
+        organization: ${{ (parameters.repoUrl | parseRepoUrl)['organization'] }}
+        project: ${{ (parameters.repoUrl | parseRepoUrl)['project'] }}
+        repository: ${{ (parameters.repoUrl | parseRepoUrl)['repo'] }}
+        branch: ${{ parameters.defaultBranch }}
+        pipelineName: ${{ parameters.name }}-ci
+        pipelineYamlFile: azure-pipelines.yml
+
+    - id: permit-pipeline
+      name: Authorize pipeline to use the registry connection
+      if: ${{ parameters.containerRegistryConnectionId }}
+      action: azure:pipeline:permit
+      input:
+        organization: ${{ (parameters.repoUrl | parseRepoUrl)['organization'] }}
+        project: ${{ (parameters.repoUrl | parseRepoUrl)['project'] }}
+        pipelineId: ${{ steps['create-pipeline'].output.pipelineId | string }}
+        resourceId: ${{ parameters.containerRegistryConnectionId }}
+        resourceType: endpoint
+        authorized: true
+
+    - id: run-pipeline
+      name: Run Azure Pipeline
+      if: ${{ parameters.runPipeline }}
+      action: azure:pipeline:run
+      input:
+        organization: ${{ (parameters.repoUrl | parseRepoUrl)['organization'] }}
+        project: ${{ (parameters.repoUrl | parseRepoUrl)['project'] }}
+        pipelineId: ${{ steps['create-pipeline'].output.pipelineId | string }}
+        branch: ${{ parameters.defaultBranch }}
+
+    - id: register
+      name: Register in the catalog
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: /catalog-info.yaml
+
+  output:
+    links:
+      - title: Repository
+        icon: github
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Pipeline
+        icon: dashboard
+        url: ${{ steps['create-pipeline'].output.pipelineUrl }}
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}

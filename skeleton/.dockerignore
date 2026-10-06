@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/*.user
+.git/
+.gitignore
+Dockerfile
+.dockerignore
+azure-pipelines.yml
+docs/
+mkdocs.yml
+catalog-info.yaml
