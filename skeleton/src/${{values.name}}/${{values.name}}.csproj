@@ -2,6 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>net${{ values.dotnetVersion }}</TargetFramework>
+    <AssemblyName>${{ values.name }}</AssemblyName>
+    <RootNamespace>${{ values.dotnetNamespace }}</RootNamespace>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>

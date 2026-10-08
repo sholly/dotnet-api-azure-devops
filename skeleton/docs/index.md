@@ -5,7 +5,7 @@ ${{ values.description }}
 ## Run locally
 
 ```bash
-dotnet run --project src/WebApi
+dotnet run --project src/${{ values.name }}
 curl http://localhost:5080/healthz
 ```
 

@@ -132,6 +132,7 @@ spec:
           owner: ${{ parameters.owner }}
           system: ${{ parameters.system }}
           dotnetVersion: ${{ parameters.dotnetVersion }}
+          dotnetNamespace: ${{ parameters.name | replace("-", " ") | title | replace(" ", "") }}
           organization: ${{ (parameters.repoUrl | parseRepoUrl)['organization'] }}
           project: ${{ (parameters.repoUrl | parseRepoUrl)['project'] }}
           repo: ${{ (parameters.repoUrl | parseRepoUrl)['repo'] }}

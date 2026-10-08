@@ -3,11 +3,11 @@ FROM mcr.microsoft.com/dotnet/sdk:${{ values.dotnetVersion }} AS build
 WORKDIR /src
 
 # Restore first so this layer is cached when only source changes
-COPY ["src/WebApi/WebApi.csproj", "src/WebApi/"]
-RUN dotnet restore "src/WebApi/WebApi.csproj"
+COPY ["src/${{values.name}}/${{values.name}}.csproj", "src/${{values.name}}/"]
+RUN dotnet restore "src/${{values.name}}/${{values.name}}.csproj"
 
 COPY . .
-RUN dotnet publish "src/WebApi/WebApi.csproj" \
+RUN dotnet publish "src/${{values.name}}/${{values.name}}.csproj" \
     -c Release -o /app/publish /p:UseAppHost=false
 
 # ---- runtime (Red Hat UBI 9 / RHEL-based) ----
@@ -29,4 +29,4 @@ COPY --from=build --chown=1001:0 /app/publish .
 
 # Non-root default user of the Red Hat .NET images
 USER 1001
-ENTRYPOINT ["dotnet", "WebApi.dll"]
+ENTRYPOINT ["dotnet", "${{values.name}}.dll"]
