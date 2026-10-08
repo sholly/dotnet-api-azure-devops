@@ -1,0 +1,57 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.name }}
+  description: ${{ values.description }}
+  annotations:
+    dev.azure.com/project-repo: ${{ values.project }}/${{ values.repo }}
+    dev.azure.com/host-org: dev.azure.com/${{ values.organization }}
+    backstage.io/techdocs-ref: dir:.
+  tags:
+    - dotnet
+    - csharp
+    - api
+  links:
+    - url: https://dev.azure.com/${{ values.organization }}/${{ values.project }}/_git/${{ values.repo }}
+      title: Repository
+      icon: github
+spec:
+  type: service
+  lifecycle: experimental
+  owner: ${{ values.owner }}
+{%- if values.system %}
+  system: ${{ values.system }}
+{%- endif %}
+  providesApis:
+    - ${{ values.name }}-api
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: ${{ values.name }}-api
+  description: HTTP API exposed by ${{ values.name }}
+spec:
+  type: openapi
+  lifecycle: experimental
+  owner: ${{ values.owner }}
+{%- if values.system %}
+  system: ${{ values.system }}
+{%- endif %}
+  definition: |
+    openapi: 3.0.1
+    info:
+      title: ${{ values.name }}
+      version: v1
+    paths:
+      /healthz:
+        get:
+          summary: Health check
+          responses:
+            '200':
+              description: Healthy
+      /api/weatherforecast:
+        get:
+          summary: Sample endpoint
+          responses:
+            '200':
+              description: Five-day forecast
