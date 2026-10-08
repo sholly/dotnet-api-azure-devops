@@ -1,5 +1,5 @@
 # ---- build ----
-FROM mcr.microsoft.com/dotnet/sdk:${{ values.dotnetVersion }} AS build
+FROM ${{ values.dotnetSdkRegistry }}/dotnet/sdk:${{ values.dotnetVersion }} AS build
 WORKDIR /src
 
 # Restore first so this layer is cached when only source changes
@@ -13,10 +13,10 @@ RUN dotnet publish "src/${{values.name}}/${{values.name}}.csproj" \
 # ---- runtime (Red Hat UBI 9 / RHEL-based) ----
 {%- if values.dotnetVersion == '10.0' %}
 # .NET 10: ASP.NET Core ships in its own image
-FROM registry.access.redhat.com/ubi9/dotnet-100-aspnet AS final
+FROM ${{ values.redhatRuntimeRegistry }}/ubi9/dotnet-100-aspnet AS final
 {%- else %}
 # .NET 8: the runtime image includes ASP.NET Core
-FROM registry.access.redhat.com/ubi9/dotnet-80-runtime AS final
+FROM ${{ values.redhatRuntimeRegistry }}/ubi9/dotnet-80-runtime AS final
 {%- endif %}
 
 # Standard app directory for Red Hat .NET images

@@ -1,5 +1,5 @@
 # Azure Pipeline for ${{ values.name }}
-# Builds the .NET API into a Docker image and pushes it to the registry.
+# Builds the .NET API into a Docker image and pushes it to JFrog Artifactory.
 #
 # Note: for Azure Repos Git, PR validation builds are configured with a branch
 # policy (Repos → Branches → ${{ values.defaultBranch }} → Branch policies → Build validation),
@@ -15,6 +15,12 @@ pool:
 
 variables:
   containerRegistryConnection: '${{ values.containerRegistryConnection }}'
+  # Docker@2 prefixes this with the registry host from the service connection.
+{%- if values.artifactoryDockerRepo %}
+  # Repository-path access method: "<artifactory repo key>/<image name>".
+{%- else %}
+  # Subdomain access method: the Artifactory repo key is part of the registry host.
+{%- endif %}
   imageRepository: '${{ values.imageRepository }}'
   dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
   tag: '$(Build.BuildId)'
@@ -29,9 +35,10 @@ stages:
         steps:
           - checkout: self
 
+          # Runs on PR builds too: the Dockerfile may pull its base images from an
+          # authenticated Artifactory remote, which needs credentials before `build`.
           - task: Docker@2
             displayName: Log in to registry
-            condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
             inputs:
               command: login
               containerRegistry: '$(containerRegistryConnection)'
@@ -46,7 +53,9 @@ stages:
               buildContext: '$(Build.SourcesDirectory)'
               tags: |
                 $(tag)
+{%- if values.pushLatestTag %}
                 latest
+{%- endif %}
               arguments: >-
                 --label org.opencontainers.image.revision=$(Build.SourceVersion)
                 --label org.opencontainers.image.source=$(Build.Repository.Uri)
@@ -60,4 +69,6 @@ stages:
               repository: '$(imageRepository)'
               tags: |
                 $(tag)
+{%- if values.pushLatestTag %}
                 latest
+{%- endif %}

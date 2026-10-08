@@ -6,13 +6,14 @@ metadata:
   description: >-
     Creates an ASP.NET Core minimal Web API in a new Azure DevOps repository,
     plus an Azure Pipeline that builds it into a Docker image and pushes it to
-    your container registry.
+    JFrog Artifactory.
   tags:
     - dotnet
     - csharp
     - api
     - docker
     - azure-devops
+    - artifactory
     - recommended
 spec:
   owner: group:default/platform-team   # <-- change to the team that owns this template
@@ -88,7 +89,7 @@ spec:
           type: string
           default: main
 
-    - title: Build pipeline
+    - title: JFrog Artifactory registry
       required:
         - containerRegistryConnection
       properties:
@@ -97,8 +98,9 @@ spec:
           type: string
           description: >-
             Name of an existing "Docker Registry" service connection in the Azure DevOps
-            project (ACR, Quay, Docker Hub, ...). The pipeline pushes the image through it.
-          ui:help: 'Project Settings → Service connections. Example: acr-shared'
+            project, of type "Others", pointing at your Artifactory Docker registry.
+            The pipeline logs in and pushes the image through it.
+          ui:help: 'Project Settings → Service connections. Example: jfrog-docker'
         containerRegistryConnectionId:
           title: Service connection ID (optional)
           type: string
@@ -106,16 +108,53 @@ spec:
             GUID of the same service connection. If provided, the new pipeline is
             pre-authorized to use it, so the first run doesn't wait for manual approval.
           ui:help: Shown in the service connection URL as resourceId=<guid>
-        imageRepository:
-          title: Image repository (optional)
+        artifactoryDockerRepo:
+          title: Artifactory Docker repository key
           type: string
           description: >-
-            Repository path inside the registry, e.g. "team-a/orders-api".
+            Docker repository in Artifactory that receives the image, e.g. "docker-local".
+            It must already exist, and a virtual repo needs a default deployment target.
+            Leave blank only if the service connection URL already uses the subdomain
+            access method (https://docker-local.example.jfrog.io), where the repo key is
+            part of the host.
+          ui:help: 'Artifactory → Administration → Repositories. Example: docker-local'
+        imageRepository:
+          title: Image name (optional)
+          type: string
+          description: >-
+            Image name under the Artifactory repository, e.g. "team-a/orders-api".
             Defaults to the service name.
+        pushLatestTag:
+          title: Also push the ":latest" tag
+          type: boolean
+          default: true
+          description: >-
+            Turn this off if the target repository blocks overwriting existing tags
+            ("immutable tags"), which makes the second build fail on ":latest".
         runPipeline:
           title: Run the pipeline after creating it
           type: boolean
           default: true
+
+    - title: Base images
+      description: >-
+        Where the Dockerfile pulls its build and runtime base images from. Point these at
+        Artifactory remote repositories to keep base image pulls inside your network.
+        Each Artifactory remote proxies a single upstream, so the two registries are
+        configured separately.
+      properties:
+        dotnetSdkRegistry:
+          title: .NET SDK image registry
+          type: string
+          default: mcr.microsoft.com
+          description: Registry holding dotnet/sdk — upstream, or an Artifactory remote that proxies it.
+          ui:help: 'Artifactory example: example.jfrog.io/mcr-remote'
+        redhatRuntimeRegistry:
+          title: Red Hat runtime image registry
+          type: string
+          default: registry.access.redhat.com
+          description: Registry holding ubi9/dotnet-* — upstream, or an Artifactory remote that proxies it.
+          ui:help: 'Artifactory example: example.jfrog.io/redhat-remote'
 
   # ---------------------------------------------------------------------------
   # Steps
@@ -138,7 +177,14 @@ spec:
           repo: ${{ (parameters.repoUrl | parseRepoUrl)['repo'] }}
           defaultBranch: ${{ parameters.defaultBranch }}
           containerRegistryConnection: ${{ parameters.containerRegistryConnection }}
-          imageRepository: ${{ parameters.imageRepository or parameters.name }}
+          artifactoryDockerRepo: ${{ parameters.artifactoryDockerRepo }}
+          # Docker@2 builds the image name as <registry from the service connection>/<repository>.
+          # With Artifactory's repository-path access method the repo key is the first path
+          # segment, so it has to be folded into the repository here.
+          imageRepository: ${{ (parameters.artifactoryDockerRepo + "/" + (parameters.imageRepository or parameters.name)) if parameters.artifactoryDockerRepo else (parameters.imageRepository or parameters.name) }}
+          pushLatestTag: ${{ parameters.pushLatestTag }}
+          dotnetSdkRegistry: ${{ parameters.dotnetSdkRegistry }}
+          redhatRuntimeRegistry: ${{ parameters.redhatRuntimeRegistry }}
 
     - id: publish
       name: Create Azure DevOps repository

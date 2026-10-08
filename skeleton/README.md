@@ -19,5 +19,9 @@ docker run --rm -p 8080:8080 ${{ values.name }}:local
 ## CI
 
 `azure-pipelines.yml` builds the Docker image on every push to `${{ values.defaultBranch }}` and pushes
-`${{ values.imageRepository }}:<BuildId>` and `:latest` through the
-`${{ values.containerRegistryConnection }}` service connection.
+`${{ values.imageRepository }}:<BuildId>`{% if values.pushLatestTag %} and `:latest`{% endif %} to JFrog Artifactory
+through the `${{ values.containerRegistryConnection }}` service connection. The registry host
+comes from that service connection, so the full image is
+`<registry>/${{ values.imageRepository }}:<BuildId>`.
+
+Pull requests build the image but do not push it.
