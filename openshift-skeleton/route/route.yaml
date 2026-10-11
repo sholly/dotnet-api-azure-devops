@@ -1,0 +1,28 @@
+# Edge-terminated route: TLS stops at the OpenShift router, which then talks plain
+# HTTP to the pod on 8080 (the container serves HTTP only).
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ${{ values.name }}
+  labels:
+    app: ${{ values.name }}
+    app.kubernetes.io/name: ${{ values.name }}
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: ${{ values.name }}
+    backstage.io/kubernetes-id: ${{ values.name }}
+spec:
+{%- if values.routeHost %}
+  host: ${{ values.routeHost }}
+{%- else %}
+  # No host set, so the router generates <name>-<namespace>.<apps domain>.
+{%- endif %}
+  to:
+    kind: Service
+    name: ${{ values.name }}
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None

@@ -7,6 +7,12 @@ metadata:
     dev.azure.com/project-repo: ${{ values.project }}/${{ values.repo }}
     dev.azure.com/host-org: dev.azure.com/${{ values.organization }}
     backstage.io/techdocs-ref: dir:.
+{%- if values.deployToOpenShift %}
+    # Lets the Kubernetes / Topology tab find the workload. The manifests in openshift/
+    # carry the matching backstage.io/kubernetes-id label.
+    backstage.io/kubernetes-id: ${{ values.name }}
+    backstage.io/kubernetes-namespace: ${{ values.openshiftNamespace }}
+{%- endif %}
   tags:
     - dotnet
     - csharp

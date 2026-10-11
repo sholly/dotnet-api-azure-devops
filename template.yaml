@@ -5,8 +5,8 @@ metadata:
   title: .NET Web API (Azure DevOps + Docker)
   description: >-
     Creates an ASP.NET Core minimal Web API in a new Azure DevOps repository,
-    plus an Azure Pipeline that builds it into a Docker image and pushes it to
-    JFrog Artifactory.
+    plus an Azure Pipeline that builds it into a Docker image, pushes it to
+    JFrog Artifactory and deploys it to OpenShift with oc apply.
   tags:
     - dotnet
     - csharp
@@ -14,6 +14,8 @@ metadata:
     - docker
     - azure-devops
     - artifactory
+    - openshift
+    - kubernetes
     - recommended
 spec:
   owner: group:default/platform-team   # <-- change to the team that owns this template
@@ -135,6 +137,9 @@ spec:
           title: Run the pipeline after creating it
           type: boolean
           default: true
+          description: >-
+            The first run builds and pushes the image, and — if the OpenShift stage is
+            enabled below — deploys it.
 
     - title: Base images
       description: >-
@@ -155,6 +160,99 @@ spec:
           default: registry.access.redhat.com
           description: Registry holding ubi9/dotnet-* — upstream, or an Artifactory remote that proxies it.
           ui:help: 'Artifactory example: example.jfrog.io/redhat-remote'
+
+    - title: OpenShift deployment
+      description: >-
+        Adds a second pipeline stage that applies plain manifests — Deployment, Service and
+        optionally a Route — with `oc apply` on every build of the default branch. No GitOps
+        controller is involved; the pipeline talks to the cluster directly.
+      properties:
+        deployToOpenShift:
+          title: Deploy to OpenShift
+          type: boolean
+          default: true
+          description: >-
+            Generate openshift/ manifests and the "Deploy to OpenShift" pipeline stage.
+            Turn this off to get build-and-push only.
+      dependencies:
+        deployToOpenShift:
+          oneOf:
+            - properties:
+                deployToOpenShift:
+                  enum:
+                    - false
+            - properties:
+                deployToOpenShift:
+                  enum:
+                    - true
+                openshiftServiceConnection:
+                  title: OpenShift service connection
+                  type: string
+                  description: >-
+                    Name of an existing "OpenShift" service connection in the Azure DevOps
+                    project, created by Red Hat's OpenShift extension. The deploy stage uses
+                    it to install oc and authenticate.
+                  ui:help: 'Project Settings → Service connections. Example: ocp-prod'
+                openshiftServiceConnectionId:
+                  title: Service connection ID (optional)
+                  type: string
+                  description: >-
+                    GUID of the same service connection, so the new pipeline is pre-authorized
+                    to use it and the first run doesn't wait for manual approval.
+                  ui:help: Shown in the service connection URL as resourceId=<guid>
+                openshiftNamespace:
+                  title: Namespace
+                  type: string
+                  description: >-
+                    Project/namespace the application is deployed into. It must already exist,
+                    and the service connection's identity needs edit on it.
+                  pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+                  maxLength: 63
+                  ui:help: 'Example: orders-dev'
+                registryHost:
+                  title: Artifactory Docker registry host
+                  type: string
+                  description: >-
+                    Registry host OpenShift pulls the image from, without a scheme, e.g.
+                    "example.jfrog.io". The pipeline gets this from the Docker service
+                    connection, but the cluster can't read that connection, so the manifests
+                    need it spelled out. It has to match the service connection's URL.
+                  ui:help: 'Example: example.jfrog.io — or docker-local.example.jfrog.io for the subdomain access method'
+                imagePullSecret:
+                  title: Image pull secret (optional)
+                  type: string
+                  description: >-
+                    Name of a pull secret in the namespace that can read the Artifactory
+                    repository. Leave blank if the repository allows anonymous pulls or the
+                    namespace's default service account already has credentials.
+                replicas:
+                  title: Replicas
+                  type: integer
+                  default: 2
+                  minimum: 1
+                  maximum: 10
+                createRoute:
+                  title: Expose with a Route
+                  type: boolean
+                  default: true
+                  description: Edge-terminated OpenShift Route in front of the Service.
+                routeHost:
+                  title: Route hostname (optional)
+                  type: string
+                  description: >-
+                    Custom hostname for the Route. Leave blank to let the router generate
+                    <name>-<namespace>.<apps domain>.
+                ocVersion:
+                  title: oc version (optional)
+                  type: string
+                  description: >-
+                    Version of oc the deploy stage installs, e.g. "4.16.0". Blank uses the
+                    latest stable. A full URL to an oc release bundle also works, which is how
+                    you point it at an internal mirror.
+              required:
+                - openshiftServiceConnection
+                - openshiftNamespace
+                - registryHost
 
   # ---------------------------------------------------------------------------
   # Steps
@@ -185,6 +283,43 @@ spec:
           pushLatestTag: ${{ parameters.pushLatestTag }}
           dotnetSdkRegistry: ${{ parameters.dotnetSdkRegistry }}
           redhatRuntimeRegistry: ${{ parameters.redhatRuntimeRegistry }}
+          deployToOpenShift: ${{ parameters.deployToOpenShift }}
+          openshiftServiceConnection: ${{ parameters.openshiftServiceConnection }}
+          openshiftNamespace: ${{ parameters.openshiftNamespace }}
+          registryHost: ${{ parameters.registryHost }}
+          createRoute: ${{ parameters.createRoute }}
+          ocVersion: ${{ parameters.ocVersion }}
+          replicas: ${{ parameters.replicas }}
+
+    - id: fetch-openshift-manifests
+      name: Generate OpenShift manifests
+      if: ${{ parameters.deployToOpenShift }}
+      action: fetch:template
+      input:
+        url: ./openshift-skeleton/base
+        targetPath: ./openshift
+        values:
+          name: ${{ parameters.name }}
+          openshiftNamespace: ${{ parameters.openshiftNamespace }}
+          registryHost: ${{ parameters.registryHost }}
+          # Same fold-in of the Artifactory repo key as the pipeline's image name, so the
+          # cluster pulls exactly what the build pushed.
+          imageRepository: ${{ (parameters.artifactoryDockerRepo + "/" + (parameters.imageRepository or parameters.name)) if parameters.artifactoryDockerRepo else (parameters.imageRepository or parameters.name) }}
+          imagePullSecret: ${{ parameters.imagePullSecret }}
+          replicas: ${{ parameters.replicas }}
+
+    # The Route lives in its own skeleton directory so that turning it off leaves no
+    # unused file behind; fetch:template has no per-file condition.
+    - id: fetch-openshift-route
+      name: Generate OpenShift route
+      if: ${{ parameters.deployToOpenShift and parameters.createRoute }}
+      action: fetch:template
+      input:
+        url: ./openshift-skeleton/route
+        targetPath: ./openshift
+        values:
+          name: ${{ parameters.name }}
+          routeHost: ${{ parameters.routeHost }}
 
     - id: publish
       name: Create Azure DevOps repository
@@ -215,6 +350,18 @@ spec:
         project: ${{ (parameters.repoUrl | parseRepoUrl)['project'] }}
         pipelineId: ${{ steps['create-pipeline'].output.pipelineId | string }}
         resourceId: ${{ parameters.containerRegistryConnectionId }}
+        resourceType: endpoint
+        authorized: true
+
+    - id: permit-pipeline-openshift
+      name: Authorize pipeline to use the OpenShift connection
+      if: ${{ parameters.deployToOpenShift and parameters.openshiftServiceConnectionId }}
+      action: azure:pipeline:permit
+      input:
+        organization: ${{ (parameters.repoUrl | parseRepoUrl)['organization'] }}
+        project: ${{ (parameters.repoUrl | parseRepoUrl)['project'] }}
+        pipelineId: ${{ steps['create-pipeline'].output.pipelineId | string }}
+        resourceId: ${{ parameters.openshiftServiceConnectionId }}
         resourceType: endpoint
         authorized: true
 

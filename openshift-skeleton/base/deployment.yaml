@@ -1,0 +1,90 @@
+# Deployment for ${{ values.name }}.
+#
+# The image is pinned per build by CI: the "Deploy to OpenShift" stage of
+# azure-pipelines.yml replaces IMAGE_PLACEHOLDER with
+# ${{ values.registryHost }}/${{ values.imageRepository }}:<BuildId> before running `oc apply`, and fails the
+# stage if the token is missing. Keep it exactly as written.
+#
+# To apply by hand:
+#   sed 's|IMAGE_PLACEHOLDER|${{ values.registryHost }}/${{ values.imageRepository }}:<tag>|' openshift/deployment.yaml \
+#     | oc apply -n ${{ values.openshiftNamespace }} -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${{ values.name }}
+  labels:
+    app: ${{ values.name }}
+    app.kubernetes.io/name: ${{ values.name }}
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: ${{ values.name }}
+    app.openshift.io/runtime: dotnet
+    backstage.io/kubernetes-id: ${{ values.name }}
+spec:
+  replicas: ${{ values.replicas }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: ${{ values.name }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: ${{ values.name }}
+        app.kubernetes.io/name: ${{ values.name }}
+        backstage.io/kubernetes-id: ${{ values.name }}
+    spec:
+{%- if values.imagePullSecret %}
+      imagePullSecrets:
+        - name: ${{ values.imagePullSecret }}
+{%- endif %}
+      containers:
+        - name: ${{ values.name }}
+          image: IMAGE_PLACEHOLDER
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: Production
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # The Dockerfile already runs as 1001; OpenShift's restricted-v2 SCC assigns
+          # the effective UID, so runAsUser is deliberately left unset.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            # readOnlyRootFilesystem is left off: ASP.NET Core writes DataProtection keys
+            # and temp files under $HOME and /tmp. To turn it on, mount emptyDir volumes
+            # at /tmp and /opt/app-root/.aspnet first.
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault

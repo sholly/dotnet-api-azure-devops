@@ -1,5 +1,6 @@
 # Azure Pipeline for ${{ values.name }}
-# Builds the .NET API into a Docker image and pushes it to JFrog Artifactory.
+# Builds the .NET API into a Docker image, pushes it to JFrog Artifactory{% if values.deployToOpenShift %} and
+# applies the manifests in openshift/ to OpenShift with `oc apply`{% endif %}.
 #
 # Note: for Azure Repos Git, PR validation builds are configured with a branch
 # policy (Repos → Branches → ${{ values.defaultBranch }} → Branch policies → Build validation),
@@ -25,6 +26,16 @@ variables:
   dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
   tag: '$(Build.BuildId)'
   isDefaultBranch: $[eq(variables['Build.SourceBranch'], 'refs/heads/${{ values.defaultBranch }}')]
+{%- if values.deployToOpenShift %}
+
+  # OpenShift pulls the image itself and cannot read the Docker service connection,
+  # so the registry host is spelled out here for the manifests.
+  imageReference: '${{ values.registryHost }}/${{ values.imageRepository }}'
+  fullImage: '$(imageReference):$(tag)'
+  openshiftServiceConnection: '${{ values.openshiftServiceConnection }}'
+  openshiftNamespace: '${{ values.openshiftNamespace }}'
+  manifestDir: '$(Build.ArtifactStagingDirectory)/openshift'
+{%- endif %}
 
 stages:
   - stage: Build
@@ -71,4 +82,65 @@ stages:
                 $(tag)
 {%- if values.pushLatestTag %}
                 latest
+{%- endif %}
+{%- if values.deployToOpenShift %}
+
+  - stage: Deploy
+    displayName: Deploy to OpenShift
+    dependsOn: Build
+    # Same gate as the push: only the default branch, never a PR validation build.
+    condition: and(succeeded(), eq(variables.isDefaultBranch, true), ne(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+      - job: OcApply
+        displayName: oc apply
+        steps:
+          - checkout: self
+
+          # Red Hat's OpenShift extension for Azure DevOps. Installs oc, puts it on PATH
+          # and writes a kubeconfig from the service connection, so the plain script steps
+          # below can call oc directly.
+          - task: oc-setup@2
+            displayName: Install and configure oc
+            inputs:
+              openshiftService: '$(openshiftServiceConnection)'
+{%- if values.ocVersion %}
+              version: '${{ values.ocVersion }}'
+{%- endif %}
+
+          # Fails here with a readable message rather than part-way through `oc apply`.
+          - script: |
+              set -euo pipefail
+              oc whoami
+              if ! oc auth can-i create deployments.apps -n "$(openshiftNamespace)" >/dev/null 2>&1; then
+                echo "##vso[task.logissue type=error]The service connection's identity cannot create deployments in $(openshiftNamespace) — the namespace may not exist, or the identity may lack edit on it: oc policy add-role-to-user edit -z <serviceaccount> -n $(openshiftNamespace)"
+                exit 1
+              fi
+            displayName: Check namespace access
+
+          - script: |
+              set -euo pipefail
+              rm -rf "$(manifestDir)"
+              mkdir -p "$(manifestDir)"
+              cp openshift/*.yaml "$(manifestDir)/"
+              if ! grep -q 'IMAGE_PLACEHOLDER' "$(manifestDir)/deployment.yaml"; then
+                echo "##vso[task.logissue type=error]IMAGE_PLACEHOLDER is gone from openshift/deployment.yaml, so the image tag cannot be pinned."
+                exit 1
+              fi
+              sed -i "s|IMAGE_PLACEHOLDER|$(fullImage)|g" "$(manifestDir)/deployment.yaml"
+              echo "Deploying $(fullImage) to $(openshiftNamespace)"
+            displayName: Pin image tag in manifests
+
+          - script: |
+              set -euo pipefail
+              oc apply -n "$(openshiftNamespace)" -f "$(manifestDir)"
+              oc rollout status deployment/${{ values.name }} -n "$(openshiftNamespace)" --timeout=5m
+            displayName: Apply manifests and wait for rollout
+{%- if values.createRoute %}
+
+          - script: |
+              set -euo pipefail
+              host="$(oc get route ${{ values.name }} -n "$(openshiftNamespace)" -o jsonpath='{.spec.host}')"
+              echo "Route: https://${host}"
+            displayName: Show route URL
+{%- endif %}
 {%- endif %}
