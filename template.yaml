@@ -4,9 +4,9 @@ metadata:
   name: dotnet-api-azure-devops
   title: .NET Web API (Azure DevOps + Docker)
   description: >-
-    Creates an ASP.NET Core minimal Web API in a new Azure DevOps repository, plus an
-    Azure Pipeline that builds it into a Docker image, pushes it to JFrog Artifactory
-    and promotes it to OpenShift through a GitOps repository watched by Argo CD.
+    Creates an ASP.NET Core minimal Web API in a new Azure DevOps repository,
+    plus an Azure Pipeline that builds it into a Docker image and pushes it to
+    JFrog Artifactory.
   tags:
     - dotnet
     - csharp
@@ -14,9 +14,6 @@ metadata:
     - docker
     - azure-devops
     - artifactory
-    - openshift
-    - argocd
-    - gitops
     - recommended
 spec:
   owner: group:default/platform-team   # <-- change to the team that owns this template
@@ -94,20 +91,8 @@ spec:
 
     - title: JFrog Artifactory registry
       required:
-        - containerRegistryHost
         - containerRegistryConnection
       properties:
-        containerRegistryHost:
-          title: Artifactory Docker registry host
-          type: string
-          description: >-
-            Host part of the Artifactory Docker registry, without a scheme and without
-            the repository key. OpenShift pulls the image directly, so unlike the
-            pipeline it cannot read the host out of the service connection — it has to
-            be spelled out here.
-          pattern: '^[a-z0-9.-]+(:[0-9]+)?$'
-          ui:help: 'Example: example.jfrog.io (or docker-local.example.jfrog.io with the subdomain access method)'
-
         containerRegistryConnection:
           title: Container registry service connection
           type: string
@@ -171,87 +156,6 @@ spec:
           description: Registry holding ubi9/dotnet-* — upstream, or an Artifactory remote that proxies it.
           ui:help: 'Artifactory example: example.jfrog.io/redhat-remote'
 
-    - title: OpenShift deployment (Argo CD)
-      description: >-
-        A second Azure DevOps repository holds the Helm chart that describes the
-        deployment, and two Argo CD applications watch it — one per environment.
-        Every build of the default branch pins a new image tag for dev; promotion to
-        prod is a manually triggered pipeline stage.
-      required:
-        - gitopsRepoUrl
-        - argoInstance
-      properties:
-        gitopsRepoUrl:
-          title: GitOps repository location
-          type: string
-          description: >-
-            Azure DevOps organization, project and the name of the NEW repository that
-            will hold the Helm chart. Use the same project as the application repo —
-            the pipeline reaches it through `resources.repositories`, which is
-            project-scoped.
-          ui:field: RepoUrlPicker
-          ui:options:
-            allowedHosts:
-              - dev.azure.com
-          ui:help: 'Convention: <service name>-gitops'
-
-        argoInstance:
-          title: Argo CD instance
-          type: string
-          default: main
-          description: >-
-            Name of the Argo CD instance as configured in RHDH's app-config under
-            `argocd.appLocatorMethods[].instances[].name` — not its URL.
-          ui:help: 'Must match an instance name in app-config, e.g. main'
-
-        argoProject:
-          title: Argo CD project (optional)
-          type: string
-          description: >-
-            Leave blank to get one Argo CD project per application, named after it
-            (recommended). If you name an existing project here, the scaffolder step
-            fails unless that project's spec already matches exactly what the action
-            would create — it refuses to overwrite a differing project.
-          ui:help: Blank is the safe choice
-
-        devNamespace:
-          title: Dev namespace (optional)
-          type: string
-          description: OpenShift namespace for the dev environment. Defaults to "<name>-dev".
-          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
-          maxLength: 63
-
-        prodNamespace:
-          title: Prod namespace (optional)
-          type: string
-          description: OpenShift namespace for the prod environment. Defaults to "<name>-prod".
-          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
-          maxLength: 63
-
-        prodReplicaCount:
-          title: Prod replicas
-          type: integer
-          default: 2
-          minimum: 1
-          maximum: 10
-
-        prodHostname:
-          title: Prod route hostname (optional)
-          type: string
-          description: >-
-            Hostname for the production Route. Leave blank to let OpenShift generate
-            one from the service and namespace names.
-          ui:help: 'Example: orders-api.apps.example.com'
-
-        imagePullSecret:
-          title: Image pull secret (optional)
-          type: string
-          description: >-
-            Name of a docker-registry secret in both namespaces that can pull from
-            Artifactory. Leave blank if the namespaces already have a global pull
-            secret, or if the repository allows anonymous pulls.
-          ui:help: 'Example: artifactory-pull'
-
   # ---------------------------------------------------------------------------
   # Steps
   # ---------------------------------------------------------------------------
@@ -261,11 +165,6 @@ spec:
       action: fetch:template
       input:
         url: ./skeleton
-        targetPath: ./app
-        copyWithoutTemplating:
-          # Azure Pipelines step template: its ${{ parameters.* }} expressions use the
-          # same delimiters as Nunjucks, so it is copied verbatim.
-          - .azure/templates/gitops-bump.yml
         values:
           name: ${{ parameters.name }}
           description: ${{ parameters.description }}
@@ -286,56 +185,13 @@ spec:
           pushLatestTag: ${{ parameters.pushLatestTag }}
           dotnetSdkRegistry: ${{ parameters.dotnetSdkRegistry }}
           redhatRuntimeRegistry: ${{ parameters.redhatRuntimeRegistry }}
-          # Deployment / GitOps
-          imageReference: ${{ parameters.containerRegistryHost }}/${{ (parameters.artifactoryDockerRepo + "/" + (parameters.imageRepository or parameters.name)) if parameters.artifactoryDockerRepo else (parameters.imageRepository or parameters.name) }}
-          gitopsProject: ${{ (parameters.gitopsRepoUrl | parseRepoUrl)['project'] }}
-          gitopsRepo: ${{ (parameters.gitopsRepoUrl | parseRepoUrl)['repo'] }}
-          gitopsRepoHttpUrl: https://dev.azure.com/${{ (parameters.gitopsRepoUrl | parseRepoUrl)['organization'] }}/${{ (parameters.gitopsRepoUrl | parseRepoUrl)['project'] }}/_git/${{ (parameters.gitopsRepoUrl | parseRepoUrl)['repo'] }}
-          argoInstance: ${{ parameters.argoInstance }}
-          devNamespace: ${{ parameters.devNamespace or (parameters.name + "-dev") }}
-          prodNamespace: ${{ parameters.prodNamespace or (parameters.name + "-prod") }}
-
-    - id: fetch-gitops
-      name: Generate GitOps Helm chart
-      action: fetch:template
-      input:
-        url: ./gitops-skeleton
-        targetPath: ./gitops
-        copyWithoutTemplating:
-          # Helm's {{ }} does not collide with the scaffolder's ${{ }}, but these files
-          # need no scaffolder values at all, so they are copied verbatim.
-          - chart/templates/*
-        values:
-          name: ${{ parameters.name }}
-          repo: ${{ (parameters.repoUrl | parseRepoUrl)['repo'] }}
-          repoHttpUrl: https://dev.azure.com/${{ (parameters.repoUrl | parseRepoUrl)['organization'] }}/${{ (parameters.repoUrl | parseRepoUrl)['project'] }}/_git/${{ (parameters.repoUrl | parseRepoUrl)['repo'] }}
-          gitopsRepoHttpUrl: https://dev.azure.com/${{ (parameters.gitopsRepoUrl | parseRepoUrl)['organization'] }}/${{ (parameters.gitopsRepoUrl | parseRepoUrl)['project'] }}/_git/${{ (parameters.gitopsRepoUrl | parseRepoUrl)['repo'] }}
-          defaultBranch: ${{ parameters.defaultBranch }}
-          containerRegistryHost: ${{ parameters.containerRegistryHost }}
-          imageReference: ${{ parameters.containerRegistryHost }}/${{ (parameters.artifactoryDockerRepo + "/" + (parameters.imageRepository or parameters.name)) if parameters.artifactoryDockerRepo else (parameters.imageRepository or parameters.name) }}
-          imagePullSecret: ${{ parameters.imagePullSecret }}
-          devNamespace: ${{ parameters.devNamespace or (parameters.name + "-dev") }}
-          prodNamespace: ${{ parameters.prodNamespace or (parameters.name + "-prod") }}
-          prodReplicaCount: ${{ parameters.prodReplicaCount }}
-          prodHostname: ${{ parameters.prodHostname }}
 
     - id: publish
       name: Create Azure DevOps repository
       action: publish:azure
       input:
         repoUrl: ${{ parameters.repoUrl }}
-        sourcePath: ./app
         description: ${{ parameters.description }}
-        defaultBranch: ${{ parameters.defaultBranch }}
-        gitCommitMessage: 'Initial commit from Red Hat Developer Hub template'
-
-    - id: publish-gitops
-      name: Create GitOps repository
-      action: publish:azure
-      input:
-        repoUrl: ${{ parameters.gitopsRepoUrl }}
-        sourcePath: ./gitops
-        description: 'Argo CD desired state for ${{ parameters.name }}'
         defaultBranch: ${{ parameters.defaultBranch }}
         gitCommitMessage: 'Initial commit from Red Hat Developer Hub template'
 
@@ -362,34 +218,6 @@ spec:
         resourceType: endpoint
         authorized: true
 
-    # Creates an Argo CD AppProject + Application per environment. Both applications
-    # read the same chart/ path; chart/.argocd-source-<app name>.yaml selects the
-    # values file for each. The action always sets syncPolicy.automated (prune +
-    # selfHeal), so the promotion gate is the manual pipeline stage, not a sync button.
-    - id: create-argocd-dev
-      name: Create Argo CD application (dev)
-      action: argocd:create-resources
-      input:
-        appName: ${{ parameters.name }}-dev
-        argoInstance: ${{ parameters.argoInstance }}
-        projectName: ${{ parameters.argoProject or (parameters.name + "-dev") }}
-        namespace: ${{ parameters.devNamespace or (parameters.name + "-dev") }}
-        repoUrl: https://dev.azure.com/${{ (parameters.gitopsRepoUrl | parseRepoUrl)['organization'] }}/${{ (parameters.gitopsRepoUrl | parseRepoUrl)['project'] }}/_git/${{ (parameters.gitopsRepoUrl | parseRepoUrl)['repo'] }}
-        path: chart
-        labelValue: ${{ parameters.name }}
-
-    - id: create-argocd-prod
-      name: Create Argo CD application (prod)
-      action: argocd:create-resources
-      input:
-        appName: ${{ parameters.name }}-prod
-        argoInstance: ${{ parameters.argoInstance }}
-        projectName: ${{ parameters.argoProject or (parameters.name + "-prod") }}
-        namespace: ${{ parameters.prodNamespace or (parameters.name + "-prod") }}
-        repoUrl: https://dev.azure.com/${{ (parameters.gitopsRepoUrl | parseRepoUrl)['organization'] }}/${{ (parameters.gitopsRepoUrl | parseRepoUrl)['project'] }}/_git/${{ (parameters.gitopsRepoUrl | parseRepoUrl)['repo'] }}
-        path: chart
-        labelValue: ${{ parameters.name }}
-
     - id: run-pipeline
       name: Run Azure Pipeline
       if: ${{ parameters.runPipeline }}
@@ -412,25 +240,9 @@ spec:
       - title: Repository
         icon: github
         url: ${{ steps['publish'].output.remoteUrl }}
-      - title: GitOps repository
-        icon: github
-        url: ${{ steps['publish-gitops'].output.remoteUrl }}
       - title: Pipeline
         icon: dashboard
         url: ${{ steps['create-pipeline'].output.pipelineUrl }}
       - title: Open in catalog
         icon: catalog
         entityRef: ${{ steps['register'].output.entityRef }}
-    text:
-      - title: Before the first sync succeeds
-        content: |
-          The Argo CD applications **${{ parameters.name }}-dev** and
-          **${{ parameters.name }}-prod** were created, but they deploy into
-          `${{ parameters.devNamespace or (parameters.name + "-dev") }}` and
-          `${{ parameters.prodNamespace or (parameters.name + "-prod") }}`, which Argo CD
-          will not create for you. Create both namespaces, label them
-          `argocd.argoproj.io/managed-by=openshift-gitops`, and register the GitOps repo
-          in Argo CD. The GitOps repository's README has the exact commands.
-
-          Until the first build finishes, both environments point at the `latest` tag and
-          will report as degraded.

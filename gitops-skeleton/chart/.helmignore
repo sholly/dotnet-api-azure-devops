@@ -1,4 +1,0 @@
-.git/
-.gitignore
-# Argo CD source overrides — read by Argo CD, not part of the chart
-.argocd-source*.yaml

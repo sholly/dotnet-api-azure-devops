@@ -1,5 +1,0 @@
-# Argo CD source override for the "${{ values.name }}-prod" application.
-# See the -dev file for how this works.
-helm:
-  valueFiles:
-    - values-prod.yaml
