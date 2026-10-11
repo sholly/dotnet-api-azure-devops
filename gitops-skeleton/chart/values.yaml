@@ -1,0 +1,62 @@
+# Chart defaults for ${{ values.name }}.
+#
+# Per-environment overrides live in values-dev.yaml / values-prod.yaml. Each Argo CD
+# application selects its own file through chart/.argocd-source-<app name>.yaml, so
+# both applications can share this one chart.
+
+replicaCount: 1
+
+image:
+  # Full image reference minus the tag, as pushed by the Azure Pipeline.
+  repository: ${{ values.imageReference }}
+  # Overridden per environment. The pipeline rewrites the "tag:" line in
+  # values-<env>.yaml, so leave the tag quoted and on a line of its own.
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Pull secret(s) in the target namespace that can read the Artifactory repository.
+{%- if values.imagePullSecret %}
+imagePullSecrets:
+  - name: ${{ values.imagePullSecret }}
+{%- else %}
+# e.g. imagePullSecrets: [{ name: artifactory-pull }]
+imagePullSecrets: []
+{%- endif %}
+
+serviceAccount:
+  create: true
+  # Defaults to the chart name when blank.
+  name: ""
+
+service:
+  port: 8080
+
+route:
+  enabled: true
+  # Blank lets OpenShift generate <name>-<namespace>.<apps domain>.
+  host: ""
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ASPNETCORE_ENVIRONMENT for the container.
+aspnetcoreEnvironment: Production
+
+# Extra environment variables, as a list of Kubernetes EnvVar objects.
+extraEnv: []
+
+probes:
+  path: /healthz
+
+securityContext:
+  # The app runs from a read-only root filesystem with an emptyDir on /tmp.
+  # Set to false if a library needs to write elsewhere in the container.
+  readOnlyRootFilesystem: true

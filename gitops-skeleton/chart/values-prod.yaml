@@ -1,0 +1,29 @@
+# Production overrides for ${{ values.name }}. Applied on top of values.yaml.
+#
+# Argo CD application: ${{ values.name }}-prod   ->   namespace ${{ values.prodNamespace }}
+# The "tag:" line below is rewritten by the "Promote to prod" stage of
+# azure-pipelines.yml, which is a manually triggered stage. Nothing else in this
+# file should contain a "tag:" key.
+
+replicaCount: ${{ values.prodReplicaCount }}
+
+aspnetcoreEnvironment: Production
+
+image:
+  tag: "latest"
+
+route:
+{%- if values.prodHostname %}
+  host: "${{ values.prodHostname }}"
+{%- else %}
+  # Blank lets OpenShift generate the hostname. Set a real one for production.
+  host: ""
+{%- endif %}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: '1'
+    memory: 1Gi

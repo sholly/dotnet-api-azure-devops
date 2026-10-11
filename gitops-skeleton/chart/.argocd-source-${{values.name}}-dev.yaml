@@ -1,0 +1,11 @@
+# Argo CD source override for the "${{ values.name }}-dev" application.
+#
+# Argo CD reads .argocd-source-<application name>.yaml from the application's path and
+# merge-patches it over spec.source. That is how both applications point at this one
+# chart while picking up different values files.
+#
+# If your Argo CD runs applications outside its own namespace ("apps in any namespace"),
+# the filename it looks for is .argocd-source-<app namespace>_<application name>.yaml.
+helm:
+  valueFiles:
+    - values-dev.yaml

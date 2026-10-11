@@ -7,13 +7,21 @@ metadata:
     dev.azure.com/project-repo: ${{ values.project }}/${{ values.repo }}
     dev.azure.com/host-org: dev.azure.com/${{ values.organization }}
     backstage.io/techdocs-ref: dir:.
+    # Matches the "backstage-name" label that argocd:create-resources puts on both
+    # applications, so the Argo CD tab shows dev and prod together.
+    argocd/app-selector: backstage-name=${{ values.name }}
+    argocd/instance-name: ${{ values.argoInstance }}
   tags:
     - dotnet
     - csharp
     - api
+    - openshift
   links:
     - url: https://dev.azure.com/${{ values.organization }}/${{ values.project }}/_git/${{ values.repo }}
       title: Repository
+      icon: github
+    - url: ${{ values.gitopsRepoHttpUrl }}
+      title: GitOps repository
       icon: github
 spec:
   type: service

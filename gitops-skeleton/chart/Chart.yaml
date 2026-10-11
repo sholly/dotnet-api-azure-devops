@@ -1,0 +1,11 @@
+apiVersion: v2
+name: ${{ values.name }}
+description: OpenShift deployment for ${{ values.name }}
+type: application
+
+# Chart version. Bump when the templates change.
+version: 0.1.0
+
+# Informational only — the image tag deployed per environment lives in
+# values-<env>.yaml and is written by the Azure Pipeline.
+appVersion: "0.1.0"

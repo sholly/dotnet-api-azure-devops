@@ -1,14 +1,26 @@
 # Azure Pipeline for ${{ values.name }}
-# Builds the .NET API into a Docker image and pushes it to JFrog Artifactory.
+#
+# Build  -> Docker image into JFrog Artifactory
+# Dev    -> writes the new tag into the GitOps repo; Argo CD syncs ${{ values.name }}-dev
+# Prod   -> same, manually triggered; Argo CD syncs ${{ values.name }}-prod
 #
 # Note: for Azure Repos Git, PR validation builds are configured with a branch
 # policy (Repos → Branches → ${{ values.defaultBranch }} → Branch policies → Build validation),
-# not with a `pr:` block. PR builds build the image but don't push it.
+# not with a `pr:` block. PR builds build the image but don't push or deploy.
 
 trigger:
   branches:
     include:
       - ${{ values.defaultBranch }}
+
+resources:
+  repositories:
+    # Declaring the GitOps repo here is what grants the job token access to it when
+    # "Protect access to repositories in YAML pipelines" is on (the default).
+    - repository: gitops
+      type: git
+      name: ${{ values.gitopsProject }}/${{ values.gitopsRepo }}
+      ref: refs/heads/${{ values.defaultBranch }}
 
 pool:
   vmImage: ubuntu-latest
@@ -24,6 +36,7 @@ variables:
   imageRepository: '${{ values.imageRepository }}'
   dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
   tag: '$(Build.BuildId)'
+  gitopsDir: '$(Agent.BuildDirectory)/gitops'
   isDefaultBranch: $[eq(variables['Build.SourceBranch'], 'refs/heads/${{ values.defaultBranch }}')]
 
 stages:
@@ -72,3 +85,48 @@ stages:
 {%- if values.pushLatestTag %}
                 latest
 {%- endif %}
+
+  - stage: DeployDev
+    displayName: Deploy to dev
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables.isDefaultBranch, true), ne(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+      - job: Bump
+        displayName: Set dev image tag in GitOps repo
+        steps:
+          # Only the GitOps repo is needed here, not the application source.
+          - checkout: gitops
+            persistCredentials: true
+            path: gitops
+            # Full history: pushing from a shallow clone can be rejected.
+            fetchDepth: 0
+            clean: true
+
+          - template: .azure/templates/gitops-bump.yml
+            parameters:
+              valuesFile: chart/values-dev.yaml
+              environment: dev
+              branch: ${{ values.defaultBranch }}
+
+  - stage: PromoteProd
+    displayName: Promote to prod
+    dependsOn: DeployDev
+    # Manually triggered: the production gate is a human running this stage, which is
+    # what writes the tag into values-prod.yaml. Argo CD then syncs it automatically.
+    trigger: manual
+    jobs:
+      - job: Bump
+        displayName: Set prod image tag in GitOps repo
+        steps:
+          - checkout: gitops
+            persistCredentials: true
+            path: gitops
+            # Full history: pushing from a shallow clone can be rejected.
+            fetchDepth: 0
+            clean: true
+
+          - template: .azure/templates/gitops-bump.yml
+            parameters:
+              valuesFile: chart/values-prod.yaml
+              environment: prod
+              branch: ${{ values.defaultBranch }}
