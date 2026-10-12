@@ -99,9 +99,15 @@ stages:
           # Red Hat's OpenShift extension for Azure DevOps. Installs oc, puts it on PATH
           # and writes a kubeconfig from the service connection, so the plain script steps
           # below can call oc directly.
-          - task: oc-setup@2
+          #
+          # Major version 3 — the extension's getting-started doc still shows @2, which no
+          # longer resolves and fails at queue time with "A task is missing". @3 also added
+          # the required connectionType input; the alternative is 'Runtime Configuration',
+          # which takes a kubeconfig instead of a service connection.
+          - task: oc-setup@3
             displayName: Install and configure oc
             inputs:
+              connectionType: 'OpenShift Connection Service'
               openshiftService: '$(openshiftServiceConnection)'
 {%- if values.ocVersion %}
               version: '${{ values.ocVersion }}'

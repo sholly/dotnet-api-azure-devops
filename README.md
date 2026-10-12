@@ -45,7 +45,7 @@ the per-build tag only ever exists in the applied copy, so `git` never records i
 | `publish:azure` | `@backstage/plugin-scaffolder-backend-module-azure` | Preinstalled: `./dynamic-plugins/dist/backstage-plugin-scaffolder-backend-module-azure-dynamic` |
 | `azure:pipeline:create`, `:permit`, `:run` | `@backstage-community/plugin-scaffolder-backend-module-azure-devops` | **Not** in the preinstalled set — add it (below) |
 
-The OpenShift deploy stage needs no scaffolder plugin — it runs inside the Azure Pipeline. It does need the **[OpenShift extension for Azure DevOps](https://marketplace.visualstudio.com/items?itemName=redhat.openshift-vsts)** installed on the Azure DevOps organization, which is what provides the `oc-setup@2` task and the OpenShift service connection type.
+The OpenShift deploy stage needs no scaffolder plugin — it runs inside the Azure Pipeline. It does need the **[OpenShift extension for Azure DevOps](https://marketplace.visualstudio.com/items?itemName=redhat.openshift-vsts)** installed on the Azure DevOps organization, which is what provides the `oc-setup@3` task and the OpenShift service connection type.
 
 `dynamic-plugins.yaml` (or the `dynamic-plugins` ConfigMap for the Operator / Helm `global.dynamic.plugins`):
 
@@ -120,7 +120,7 @@ Because base images may now come from an authenticated registry, the pipeline's 
 
 Only needed when the form's **Deploy to OpenShift** is left on.
 
-- The **[OpenShift extension for Azure DevOps](https://marketplace.visualstudio.com/items?itemName=redhat.openshift-vsts)** is installed on the organization. The deploy stage uses its `oc-setup@2` task, which installs `oc`, puts it on `PATH` and writes a kubeconfig — the rest of the stage is plain `oc` in `script:` steps.
+- The **[OpenShift extension for Azure DevOps](https://marketplace.visualstudio.com/items?itemName=redhat.openshift-vsts)** is installed on the organization. The deploy stage uses its `oc-setup@3` task, which installs `oc`, puts it on `PATH` and writes a kubeconfig — the rest of the stage is plain `oc` in `script:` steps.
 - An **OpenShift service connection** exists in the Azure DevOps project (*Project Settings → Service connections → New → OpenShift*). Token authentication with a service account token is the one to use:
 
   ```bash
@@ -145,7 +145,7 @@ Only needed when the form's **Deploy to OpenShift** is left on.
     -n orders-dev
   ```
 
-- The **cluster API is reachable from the agent**. The pipeline runs on Microsoft-hosted `ubuntu-latest`, so a cluster behind a private network needs `pool:` in `skeleton/azure-pipelines.yml` switched to a self-hosted pool. The same applies to `oc` itself, which `oc-setup@2` downloads from mirror.openshift.com — for an air-gapped agent, put the oc bundle somewhere internal and pass its URL in the form's *oc version* field.
+- The **cluster API is reachable from the agent**. The pipeline runs on Microsoft-hosted `ubuntu-latest`, so a cluster behind a private network needs `pool:` in `skeleton/azure-pipelines.yml` switched to a self-hosted pool. The same applies to `oc` itself, which `oc-setup@3` downloads from mirror.openshift.com — for an air-gapped agent, put the oc bundle somewhere internal and pass its URL in the form's *oc version* field.
 
 ### Adding an approval gate
 
@@ -164,7 +164,7 @@ The stage deploys on every build of the default branch. To gate it, turn the job
 
 ### Without the OpenShift extension
 
-If the organization can't install marketplace extensions, drop the `oc-setup@2` task and log in from a secret variable (`OPENSHIFT_SERVER`, `OPENSHIFT_TOKEN` in a variable group linked to the pipeline):
+If the organization can't install marketplace extensions, drop the `oc-setup@3` task and log in from a secret variable (`OPENSHIFT_SERVER`, `OPENSHIFT_TOKEN` in a variable group linked to the pipeline):
 
 ```yaml
           - script: |
@@ -198,6 +198,7 @@ Then change `spec.owner` in `template.yaml` to your platform team.
 ## Notes
 
 - **Templating gotcha:** the skeleton is rendered with Nunjucks using `${{ }}`, the same delimiters Azure Pipelines uses for template expressions. `azure-pipelines.yml` therefore uses only `$(var)` macros and `$[ ]` runtime expressions. If you add `${{ }}` pipeline expressions, wrap them in `{% raw %}…{% endraw %}` or list the file under `copyWithoutTemplating` in the `fetch:template` step. The OpenShift manifests are rendered the same way, so `${{ values.* }}` works in them, but anything Helm-like would not survive.
+- **`oc-setup` major version:** the task is pinned at `@3`, read from [its `task.json`](https://github.com/redhat-developer/openshift-vsts/blob/master/tasks/oc-setup/task.json). The extension's getting-started doc still documents `@2` for all four of its tasks, and a stale major version fails at queue time with *"A task is missing. The pipeline references a task called 'oc-setup' with version '2'"* — which reads like the extension isn't installed even when it is. If a future extension release bumps the major again, check `task.json` rather than the docs.
 - **Branch:** `publish:azure` defaults to `master`; the template sets `defaultBranch` explicitly (default `main`) and uses the same value for the pipeline trigger and the run.
 - **PR builds:** for Azure Repos, PR validation is a branch policy, not a `pr:` block. The pipeline builds on PRs but only pushes on the default branch.
 - **Image tags:** `<BuildId>` and, unless the form's *Also push the ":latest" tag* is turned off, `latest`. Turn it off when the target repo has **immutable tags** / "block pushing existing tags" enabled — otherwise the second build fails trying to overwrite `latest`.
